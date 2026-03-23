@@ -1,96 +1,91 @@
 import pandas as pd
 import requests
 import os
+from datetime import datetime, timedelta
 
-# --- 1. CONFIGURACIÓN MAESTRA ---
+# --- 1. CONFIGURACIÓN ---
 CARPETA = r'C:\BUSQUEDA_SECOP'
-nombre_archivo = os.path.join(CARPETA, 'INTELIGENCIA_TOTAL_INDECAP.xlsx')
+nombre_archivo = os.path.join(CARPETA, 'INTELIGENCIA_ESTRATEGICA_INDECAP_2026.xlsx')
 URL_API = "https://www.datos.gov.co/resource/p6dx-8zbt.json"
-ZONAS_ESTRATEGICAS = ['Medellín', 'Amagá', 'Angelópolis', 'La Pintada', 'Itagüí', 'Envigado', 'Sabaneta', 'Bello', 'Rionegro', 'Copacabana']
 
-# --- 2. FUNCIONES DE INTELIGENCIA DE ESTADOS ---
-
-def clasificar_oportunidad(estado):
-    """Identifica el potencial de acción según el estado del SECOP."""
-    estado = str(estado).lower()
-    if any(e in estado for e in ['publicado', 'presentación de ofertas']):
-        return "🟢 LICITAR YA (Abierto)"
-    if any(e in estado for e in ['observaciones', 'comentarios']):
-        return "🟡 INFLUIR (En borrador)"
-    if any(e in estado for e in ['desierto', 'cancelado']):
-        return "🔥 RE-LICITACIÓN PROBABLE (Llamar ya)"
-    if any(e in estado for e in ['adjudicado', 'celebrado', 'en selección']):
-        return "⚪ CERRADO (Seguimiento)"
-    return "🔵 OTROS"
-
-def limpiar_objeto_pro(row):
-    nombre = str(row.get('nombre_del_procedimiento', '')).strip()
-    desc = str(row.get('descripci_n_del_procedimiento', '')).strip()
-    if (len(nombre) < 35 or "SAS" in nombre.upper()) and len(desc) > 20:
-        return desc[:450]
-    return nombre
-
-def obtener_datos(query_where, limit):
-    columnas = "entidad,nombre_del_procedimiento,descripci_n_del_procedimiento,precio_base,estado_del_procedimiento,fecha_de_recepcion_de,urlproceso,ciudad_entidad"
-    params = {"$select": columnas, "$where": query_where, "$order": "precio_base DESC", "$limit": limit}
-    res = requests.get(URL_API, params=params, timeout=60)
-    return res.json()
-
-# --- 3. EJECUCIÓN DEL MOTOR ---
+def obtener_datos(query_where, limit=1000):
+    # USAMOS LOS NOMBRES REALES DETECTADOS EN TU TERMINAL
+    columnas = "entidad,nombre_del_procedimiento,precio_base,fase,estado_del_procedimiento,fecha_de_publicacion_del,urlproceso,ciudad_entidad,descripci_n_del_procedimiento"
+    params = {
+        "$select": columnas,
+        "$where": query_where,
+        "$order": "precio_base DESC",
+        "$limit": limit
+    }
+    try:
+        res = requests.get(URL_API, params=params, timeout=60)
+        if res.status_code == 200:
+            return res.json()
+        else:
+            print(f"⚠️ Error {res.status_code}: {res.text}")
+            return []
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        return []
 
 try:
-    print("\n" + "="*60)
-    print("📡 INICIANDO SISTEMA DE INTELIGENCIA DE MERCADO - INDECAP")
-    print("="*60)
+    print("\n" + "="*50)
+    print("🚀 LANZANDO RADAR ESTRATÉGICO INDECAP 2026")
+    print("="*50)
     
-    # TRIPLE RED: Ajustamos los rangos para capturar los contratos de 320M, 110M, etc.
-    print("🎣 Red 1: 50M - 150M (Agilidad)")
-    r1 = obtener_datos("departamento_entidad = 'Antioquia' AND precio_base >= 50000000 AND precio_base < 150000000", 600)
-    
-    print("🎣 Red 2: 150M - 900M (Core / Ejecución Directa)")
-    r2 = obtener_datos("departamento_entidad = 'Antioquia' AND precio_base >= 150000000 AND precio_base <= 900000000", 1200)
-    
-    print("🎣 Red 3: > 900M (Macro Alianzas)")
-    r3 = obtener_datos("departamento_entidad = 'Antioquia' AND precio_base > 900000000", 600)
+    # Filtro de tiempo: Últimos 60 días para carne fresca
+    hace_60_dias = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%dT%H:%M:%S')
+    # Inicio de año para rescates
+    inicio_2026 = "2026-01-01T00:00:00"
 
-    df_raw = pd.DataFrame(r1 + r2 + r3).drop_duplicates(subset=['urlproceso'])
-    
-    if not df_raw.empty:
-        # Renombramiento y Limpieza
-        df_raw['Entidad'] = df_raw['entidad']
-        df_raw['Municipio'] = df_raw['ciudad_entidad'].fillna('Antioquia')
-        df_raw['Presupuesto'] = pd.to_numeric(df_raw['precio_base'], errors='coerce').fillna(0)
-        df_raw['Link'] = df_raw['urlproceso']
-        
-        # Inteligencia de Estados y Negocio
-        df_raw['Objeto'] = df_raw.apply(limpiar_objeto_pro, axis=1)
-        df_raw['Accion_Sugerida'] = df_raw['estado_del_procedimiento'].apply(clasificar_oportunidad)
-        df_raw['Match_Score'] = df_raw.apply(lambda r: 8 if any(z.lower() in str(r['Municipio']).lower() for z in ZONAS_ESTRATEGICAS) else 5, axis=1)
-        
-        # Organización Final
-        columnas = ['Accion_Sugerida', 'Match_Score', 'Entidad', 'Municipio', 'Objeto', 'Presupuesto', 'Link']
-        df_final = df_raw[columnas].sort_values(['Accion_Sugerida', 'Presupuesto'], ascending=[True, False])
+    # RED 1: ACTIVOS (Para licitar ya - Lo más caliente)
+    print("🎣 Red 1: Buscando contratos abiertos en Antioquia...")
+    q_activos = (
+        "departamento_entidad = 'Antioquia' "
+        f"AND fecha_de_publicacion_del > '{hace_60_dias}' "
+        "AND estado_del_procedimiento IN ('Publicado', 'Presentación de ofertas')"
+    )
+    df_activos = pd.DataFrame(obtener_datos(q_activos))
 
-        # Guardado por Estrategia
-        with pd.ExcelWriter(nombre_archivo, engine='xlsxwriter') as writer:
-            # Pestaña de Oro: Los que están para licitar YA
-            df_final[df_final['Accion_Sugerida'].str.contains('LICITAR')].to_excel(writer, sheet_name='OPORTUNIDADES_ABIERTAS', index=False)
-            
-            # Pestaña de Plomo: Los cancelados/desiertos que podrían repetirse
-            df_final[df_final['Accion_Sugerida'].str.contains('RE-LICITACIÓN')].to_excel(writer, sheet_name='SEGUNDA_OPORTUNIDAD', index=False)
-            
-            # Pestaña Core: Rango 150M - 600M
-            df_final[(df_final['Presupuesto'] >= 150000000) & (df_final['Presupuesto'] <= 600000000)].to_excel(writer, sheet_name='EJECUCION_DIRECTA_CORE', index=False)
-            
-            df_final.to_excel(writer, sheet_name='HISTORIAL_COMPLETO', index=False)
+    # RED 2: INFLUENCIA (Borradores para meter observaciones)
+    print("🎣 Red 2: Buscando borradores (Presentación de observaciones)...")
+    q_borradores = (
+        "departamento_entidad = 'Antioquia' "
+        f"AND fecha_de_publicacion_del > '{hace_60_dias}' "
+        "AND estado_del_procedimiento = 'Presentación de observaciones'"
+    )
+    df_borradores = pd.DataFrame(obtener_datos(q_borradores))
 
-        print("\n" + "📊 RESUMEN DE ESTADOS DE MERCADO")
-        print("-" * 60)
-        print(df_final['Accion_Sugerida'].value_counts().to_string())
-        print("-" * 60)
-        print(f"✅ Sistema actualizado. Archivo listo en:\n{nombre_archivo}\n")
+    # RED 3: RESCATE (Desiertos o Cancelados en 2026)
+    print("🎣 Red 3: Buscando procesos fallidos para contacto comercial...")
+    q_rescate = (
+        "departamento_entidad = 'Antioquia' "
+        f"AND fecha_de_publicacion_del > '{inicio_2026}' "
+        "AND estado_del_procedimiento IN ('Desierto', 'Cancelado')"
+    )
+    df_rescate = pd.DataFrame(obtener_datos(q_rescate))
+
+    # RED 4: PREDICTIVO (Renovaciones: Contratos de 2025 de Salud/Educación)
+    print("🎣 Red 4: Analizando renovaciones probables de 2025...")
+    q_predictivo = (
+        "departamento_entidad = 'Antioquia' "
+        "AND fecha_de_publicacion_del BETWEEN '2025-01-01T00:00:00' AND '2025-12-31T23:59:59' "
+        "AND (nombre_del_procedimiento LIKE '%Salud%' OR nombre_del_procedimiento LIKE '%Capacitación%')"
+    )
+    df_predictivo = pd.DataFrame(obtener_datos(q_predictivo))
+
+    # GUARDAR RESULTADOS
+    if all(df.empty for df in [df_activos, df_borradores, df_rescate, df_predictivo]):
+        print("❌ No se encontró información con los filtros actuales.")
     else:
-        print("⚠ No se capturaron datos. Revisa la conexión.")
+        with pd.ExcelWriter(nombre_archivo, engine='xlsxwriter') as writer:
+            if not df_activos.empty: df_activos.to_excel(writer, sheet_name='ACTIVOS_LICITAR_YA', index=False)
+            if not df_borradores.empty: df_borradores.to_excel(writer, sheet_name='INFLUIR_BORRADORES', index=False)
+            if not df_rescate.empty: df_rescate.to_excel(writer, sheet_name='RESCATE_FALLIDOS', index=False)
+            if not df_predictivo.empty: df_predictivo.to_excel(writer, sheet_name='PREDICCION_RENOVABLES', index=False)
+        
+        print(f"\n✅ ¡Misión Cumplida! Archivo generado en: {nombre_archivo}")
+        print(f"   - Activos: {len(df_activos)} | Fallidos: {len(df_rescate)}")
 
 except Exception as e:
     print(f"❌ Error crítico: {e}")
