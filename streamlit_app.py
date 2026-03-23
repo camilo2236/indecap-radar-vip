@@ -36,7 +36,7 @@ try:
     # 1. Cargar datos
     df_vivo = pd.read_excel('RADAR_VIVO_INDECAP_2026.xlsx')
     
-    # 2. LIMPIEZA Y FORMATOS (Para que Streamlit no se confunda)
+    # 2. LIMPIEZA DE DATOS
     if 'urlproceso' in df_vivo.columns:
         df_vivo['urlproceso'] = df_vivo['urlproceso'].apply(limpiar_url)
     
@@ -44,14 +44,13 @@ try:
         df_vivo['fecha_de_publicacion_del'] = pd.to_datetime(df_vivo['fecha_de_publicacion_del'], errors='coerce').dt.strftime('%Y-%m-%d')
         
     if 'precio_base' in df_vivo.columns:
-        # Convertimos estrictamente a número entero para activar el formato de miles
-        df_vivo['precio_base'] = pd.to_numeric(df_vivo['precio_base'], errors='coerce').fillna(0).astype(int)
-        # Calculamos cuál es el contrato más grande para calibrar las barras de progreso
+        # Aseguramos formato de 64 bits para que aguante cifras de miles de millones sin romperse
+        df_vivo['precio_base'] = pd.to_numeric(df_vivo['precio_base'], errors='coerce').fillna(0).astype('int64')
         max_presupuesto = int(df_vivo['precio_base'].max()) if not df_vivo.empty else 1000000
     else:
         max_presupuesto = 1000000
     
-    # Métricas rápidas superiores
+    # Métricas rápidas
     col1, col2, col3 = st.columns(3)
     col1.metric("Procesos Vivos", len(df_vivo))
     col2.metric("Presupuesto en Juego", f"${df_vivo['precio_base'].sum():,.0f}".replace(",", "."))
@@ -59,34 +58,32 @@ try:
     
     st.markdown("---")
     
-    # 3. Seleccionar las columnas para la vista
-    df_mostrar = df_vivo[['entidad', 'ciudad_entidad', 'nombre_del_procedimiento', 'precio_base', 'fecha_de_publicacion_del', 'urlproceso']]
+    # 3. Preparar columnas
+    df_mostrar = df_vivo[['entidad', 'ciudad_entidad', 'nombre_del_procedimiento', 'precio_base', 'fecha_de_publicacion_del', 'urlproceso']].copy()
     
-    # 4. TABLA INTERACTIVA CON BARRA DE PROGRESO VISUAL
+    # Renombramos la columna del precio para que se vea elegante en la tabla
+    df_mostrar.rename(columns={'precio_base': 'Presupuesto (COP)'}, inplace=True)
+    
+    # --- LA MAGIA: ESTILO VISUAL DE PANDAS ---
+    # Esto dibuja la barra azul y además fuerza el formato de puntos (Ej: $ 7.000.000)
+    df_estilizado = df_mostrar.style.format({
+        "Presupuesto (COP)": lambda x: f"$ {x:,.0f}".replace(",", ".")
+    }).bar(
+        subset=["Presupuesto (COP)"], 
+        color="rgba(0, 104, 201, 0.4)", # Un azul corporativo semitransparente
+        vmin=0, 
+        vmax=max_presupuesto
+    )
+    
+    # 4. RENDERIZAR LA TABLA
     st.dataframe(
-        df_mostrar,
+        df_estilizado,
         column_config={
             "entidad": st.column_config.TextColumn("Entidad", width="medium"),
             "ciudad_entidad": st.column_config.TextColumn("Ciudad"),
             "nombre_del_procedimiento": st.column_config.TextColumn("Objeto del Contrato", width="large"),
-            
-            # --- AQUÍ ESTÁ LA MAGIA VISUAL PARA EL DINERO ---
-            "precio_base": st.column_config.ProgressColumn(
-                "Presupuesto (COP)", 
-                help="El tamaño de la barra indica visualmente el valor del contrato",
-                format="$ %d", # Formato de dinero con separador de miles
-                min_value=0,
-                max_value=max_presupuesto
-            ),
-            
-            "fecha_de_publicacion_del": st.column_config.TextColumn(
-                "Fecha de Pub.", 
-                help="Haz clic para ver los más recientes"
-            ),
-            "urlproceso": st.column_config.LinkColumn(
-                "Enlace SECOP", 
-                display_text="🔗 Abrir Proceso" 
-            )
+            "fecha_de_publicacion_del": st.column_config.TextColumn("Fecha de Pub.", help="Haz clic para ordenar"),
+            "urlproceso": st.column_config.LinkColumn("Enlace SECOP", display_text="🔗 Abrir Proceso")
         },
         hide_index=True,
         use_container_width=True,
